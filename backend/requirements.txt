@@ -1,0 +1,34 @@
+# Core Flask dependencies
+Flask==3.0.0
+Flask-CORS==4.0.0
+SQLAlchemy==2.0.23
+python-dotenv==1.0.0
+cryptography==41.0.7
+
+# Optional: Post-Quantum Cryptography Libraries
+# Install ONE of the following for real post-quantum signatures:
+
+# Option 1: Open Quantum Safe (Recommended) - Provides ML-DSA, ML-KEM, SLH-DSA
+# Supports NIST-standardized post-quantum algorithms
+# Installation: pip install liboqs-python
+# liboqs-python>=0.7.2
+
+# Option 2: SPHINCS+ - Hash-based stateless signatures
+# Fast and secure, no state management needed
+# Installation: pip install sphincsplus
+# sphincsplus>=0.7.0
+
+# Option 3: XMSS - eXtendable Merkle Signature Scheme
+# Hash-based with smaller signatures than SPHINCS+
+# Installation: pip install xmss-py
+# xmss-py>=1.1.0
+
+# If no post-quantum library is installed, the system will use
+# SHA256-based simulation for demonstration purposes.
+
+# Installation instructions:
+# 1. Create virtual environment: python -m venv venv
+# 2. Activate: venv\Scripts\activate (Windows) or source venv/bin/activate (Unix)
+# 3. Install core: pip install -r requirements.txt
+# 4. Install post-quantum (optional): pip install liboqs-python
+
