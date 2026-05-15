@@ -11,6 +11,10 @@ class AuthManager {
         this.sessionToken = localStorage.getItem('sessionToken');
         this.username = localStorage.getItem('username');
         this.userId = localStorage.getItem('userId');
+        this.sessionExpiresAt = localStorage.getItem('sessionExpiresAt');
+        this.algorithm = localStorage.getItem('algorithm');
+        this.signatureSlotsRemaining = localStorage.getItem('signatureSlotsRemaining');
+        this.generatedAlgorithm = null;
         this.privateKey = null; // Never store in localStorage for security
         
         this.setupEventListeners();
@@ -92,11 +96,22 @@ class AuthManager {
         document.getElementById('dashboardUserId').textContent = this.userId;
         document.getElementById('dashboardToken').textContent = 
             this.sessionToken.substring(0, 20) + '...';
-        
-        // Calculate expiration (typically 24 hours from login)
-        const expiresDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        const expiresDate = this.sessionExpiresAt
+            ? new Date(this.sessionExpiresAt)
+            : new Date(Date.now() + 24 * 60 * 60 * 1000);
         document.getElementById('dashboardExpires').textContent = 
             expiresDate.toLocaleString();
+
+        const algorithmEl = document.getElementById('dashboardAlgorithm');
+        const slotsEl = document.getElementById('dashboardSlotsRemaining');
+
+        if (algorithmEl) {
+            algorithmEl.textContent = this.algorithm || 'WOTS-SHA256';
+        }
+        if (slotsEl) {
+            slotsEl.textContent = this.signatureSlotsRemaining ?? 'Not limited';
+        }
     }
 
     showAuthForms() {
@@ -110,10 +125,11 @@ class AuthManager {
 
     async handleGenerateKeys() {
         try {
-            this.showStatus('Generating quantum-safe key pair...', 'success');
+            this.showStatus('Generating hash-based post-quantum key bundle...', 'success');
             
             const keyPair = await QuantumCrypto.generateKeyPair();
             this.privateKey = keyPair.privateKey;
+            this.generatedAlgorithm = keyPair.algorithm;
             
             // Display keys
             document.getElementById('publicKeyDisplay').value = keyPair.publicKey;
@@ -128,7 +144,10 @@ class AuthManager {
             // Enable register button
             document.getElementById('registerBtn').disabled = false;
             
-            this.showStatus('✓ Key pair generated successfully! Save your private key.', 'success');
+            this.showStatus(
+                `Key bundle generated with ${keyPair.signatureSlots} one-time signature slots. Save your private key.`,
+                'success'
+            );
         } catch (error) {
             this.showStatus('Error generating keys: ' + error.message, 'error');
         }
@@ -218,7 +237,8 @@ class AuthManager {
                 },
                 body: JSON.stringify({
                     username: username,
-                    public_key: publicKey
+                    public_key: publicKey,
+                    algorithm: this.generatedAlgorithm || QuantumCrypto.WOTS_ALGORITHM
                 })
             });
 
@@ -233,6 +253,7 @@ class AuthManager {
             // Store username for login
             localStorage.setItem('registeredUsername', username);
             localStorage.setItem('registeredPublicKey', publicKey);
+            localStorage.setItem('registeredAlgorithm', data.algorithm || this.generatedAlgorithm || QuantumCrypto.WOTS_ALGORITHM);
             
             // Reset form
             document.getElementById('registrationForm').reset();
@@ -284,10 +305,11 @@ class AuthManager {
 
             // Step 2: Sign the nonce
             const nonce = nonceData.nonce;
+            const keyIndex = nonceData.key_index ?? 0;
             const messageToSign = username + nonce;
-            const signature = await QuantumCrypto.signMessage(messageToSign, privateKey);
+            const signature = await QuantumCrypto.signMessage(messageToSign, privateKey, keyIndex);
 
-            this.showStatus('Signature generated, sending for verification...', 'success');
+            this.showStatus(`Signature generated with key slot ${keyIndex}, sending for verification...`, 'success');
 
             // Step 3: Login with signature
             const loginResponse = await fetch(`${API_BASE_URL}/auth/login`, {
@@ -314,10 +336,16 @@ class AuthManager {
             this.sessionToken = loginData.session_token;
             this.username = loginData.username;
             this.userId = loginData.user_id;
+            this.sessionExpiresAt = loginData.expires_at;
+            this.algorithm = loginData.algorithm;
+            this.signatureSlotsRemaining = loginData.signature_slots_remaining;
             
             localStorage.setItem('sessionToken', this.sessionToken);
             localStorage.setItem('username', this.username);
             localStorage.setItem('userId', this.userId);
+            localStorage.setItem('sessionExpiresAt', this.sessionExpiresAt);
+            localStorage.setItem('algorithm', this.algorithm);
+            localStorage.setItem('signatureSlotsRemaining', this.signatureSlotsRemaining ?? '');
             localStorage.setItem('loginTime', new Date().toISOString());
 
             // Clear login form
@@ -352,6 +380,13 @@ class AuthManager {
             });
 
             if (response.ok) {
+                const data = await response.json();
+                this.sessionExpiresAt = data.expires_at;
+                this.algorithm = data.algorithm;
+                this.signatureSlotsRemaining = data.signature_slots_remaining;
+                localStorage.setItem('sessionExpiresAt', this.sessionExpiresAt);
+                localStorage.setItem('algorithm', this.algorithm);
+                localStorage.setItem('signatureSlotsRemaining', this.signatureSlotsRemaining ?? '');
                 this.showDashboard();
             } else {
                 // Session expired or invalid
@@ -388,11 +423,17 @@ class AuthManager {
         this.sessionToken = null;
         this.username = null;
         this.userId = null;
+        this.sessionExpiresAt = null;
+        this.algorithm = null;
+        this.signatureSlotsRemaining = null;
         this.privateKey = null;
         
         localStorage.removeItem('sessionToken');
         localStorage.removeItem('username');
         localStorage.removeItem('userId');
+        localStorage.removeItem('sessionExpiresAt');
+        localStorage.removeItem('algorithm');
+        localStorage.removeItem('signatureSlotsRemaining');
         localStorage.removeItem('loginTime');
     }
 

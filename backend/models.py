@@ -11,6 +11,9 @@ class User(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     public_key = db.Column(db.Text, nullable=False)  # Stored as base64 or hex
+    signature_algorithm = db.Column(db.String(64), nullable=False, default='WOTS-SHA256')
+    signature_counter = db.Column(db.Integer, nullable=False, default=0)
+    signature_capacity = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
@@ -65,6 +68,7 @@ class Nonce(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
     nonce = db.Column(db.String(256), nullable=False, unique=True)  # Random, unique, hex-encoded
+    key_index = db.Column(db.Integer, nullable=True)  # One-time signature slot assigned to this challenge
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)  # Tight TTL prevents late replay
     used = db.Column(db.Boolean, default=False)  # Single-use enforcement
@@ -79,7 +83,7 @@ class Nonce(db.Model):
         Replay Attack Prevention: TIME-BASED
         - If nonce expired, reject even if unused
         - Limits time window attacker can use captured signature
-        - Default: 30 seconds (tight but realistic for network latency)
+        - Default: configured by NONCE_EXPIRY (5 minutes for this project)
         
         Returns: True if past expires_at time
         """

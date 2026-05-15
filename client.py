@@ -21,10 +21,11 @@ Examples:
 import sys
 import json
 import requests
-import hashlib
-import secrets
-import base64
+import os
 from typing import Tuple, Dict, Any
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+from crypto_utils import QuantumSafeSignature
 
 # ============================================================================
 # CRYPTOGRAPHIC FUNCTIONS (matches backend/crypto_utils.py)
@@ -32,30 +33,23 @@ from typing import Tuple, Dict, Any
 
 def generate_nonce(length: int = 32) -> str:
     """Generate a random 256-bit nonce and return as hex string."""
-    nonce_bytes = secrets.token_bytes(length)
-    return nonce_bytes.hex()
+    return QuantumSafeSignature.generate_nonce(length)
 
 
 def generate_keypair() -> Tuple[str, str]:
     """
     Generate a simple keypair for demonstration.
     
-    In production, this would use XMSS, SPHINCS+, or ML-DSA.
-    For this demo, we use SHA256-based simulation.
+    The default client uses the same WOTS-SHA256 browser-compatible
+    signature bundle as the web UI.
     
     Returns:
         (public_key_hex, private_key_hex) - Both as hex strings
     """
-    # Generate random 256-bit private key
-    private_key = secrets.token_bytes(32)
-    
-    # Derive public key from private key (SHA256 hash)
-    public_key = hashlib.sha256(private_key).digest()
-    
-    return public_key.hex(), private_key.hex()
+    return QuantumSafeSignature.generate_keypair()
 
 
-def sign_message(message: str, private_key_hex: str) -> str:
+def sign_message(message: str, private_key_hex: str, key_index: int = 0) -> str:
     """
     Sign a message with the private key.
     
@@ -66,14 +60,7 @@ def sign_message(message: str, private_key_hex: str) -> str:
     Returns:
         Signature as hex string
     """
-    private_key = bytes.fromhex(private_key_hex)
-    message_bytes = message.encode('utf-8')
-    
-    # Create signature using HMAC-SHA256 (demo purposes)
-    # In production, this would use XMSS, SPHINCS+, or ML-DSA
-    signature = hashlib.sha256(private_key + message_bytes).digest()
-    
-    return signature.hex()
+    return QuantumSafeSignature.sign_message(message, private_key_hex, key_index)
 
 
 def verify_signature(message: str, signature_hex: str, public_key_hex: str) -> bool:
@@ -82,9 +69,7 @@ def verify_signature(message: str, signature_hex: str, public_key_hex: str) -> b
     
     Note: This is for understanding the flow. The server does actual verification.
     """
-    # In real implementation, this would use the public key.
-    # For this demo, we just show the structure.
-    return len(signature_hex) == 64  # SHA256 = 64 hex chars
+    return QuantumSafeSignature.verify_signature(message, signature_hex, public_key_hex)
 
 
 # ============================================================================
@@ -100,6 +85,7 @@ class QuantumAuthClient:
         self.public_key = None
         self.private_key = None
         self.nonce = None
+        self.key_index = 0
         self.session_token = None
         
     def print_step(self, step: int, title: str, content: str = ""):
@@ -150,7 +136,8 @@ class QuantumAuthClient:
             url = f"{self.server_url}/auth/register"
             payload = {
                 "username": self.username,
-                "public_key": self.public_key
+                "public_key": self.public_key,
+                "algorithm": "WOTS-SHA256"
             }
             
             self.print_info(f"POST {url}")
@@ -194,9 +181,11 @@ class QuantumAuthClient:
             if response.status_code == 200:
                 data = response.json()
                 self.nonce = data.get('nonce')
+                self.key_index = data.get('key_index', 0)
                 self.print_success(f"Nonce received (Status: {response.status_code})")
                 self.print_info(f"Nonce: {self.nonce}")
-                self.print_info(f"Expires at: {data.get('expires_at', 'unknown')}")
+                self.print_info(f"Key slot: {self.key_index}")
+                self.print_info(f"Expires in: {data.get('expires_in_seconds', 'unknown')} seconds")
                 return True
             else:
                 self.print_error(f"Failed to get nonce (Status: {response.status_code})")
@@ -220,7 +209,7 @@ class QuantumAuthClient:
             
             self.print_info(f"Message to sign: '{message}'")
             
-            self.signature = sign_message(message, self.private_key)
+            self.signature = sign_message(message, self.private_key, self.key_index)
             
             self.print_success("Signature created successfully")
             self.print_info(f"Signature: {self.signature[:32]}...")
@@ -278,10 +267,10 @@ class QuantumAuthClient:
             url = f"{self.server_url}/auth/verify"
             headers = {"Authorization": f"Bearer {self.session_token}"}
             
-            self.print_info(f"GET {url}")
+            self.print_info(f"POST {url}")
             self.print_info(f"Header: Authorization: Bearer {self.session_token[:32]}...")
             
-            response = requests.get(url, headers=headers, timeout=5)
+            response = requests.post(url, headers=headers, timeout=5)
             
             if response.status_code == 200:
                 data = response.json()

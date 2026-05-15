@@ -20,17 +20,18 @@ class Config:
     # - Attacker replays the request later
     # - Server rejects: nonce expired!
     # 
-    # 30 seconds is tight enough to prevent replay but generous enough
-    # for network latency and client clock skew
+    # The synopsis specifies a 5-minute nonce lifetime. Single-use nonce
+    # tracking still prevents immediate replay inside that window.
     # 
     # Shorter = More secure but higher false-reject rate
     # Longer = Fewer false-rejects but more replay window
-    NONCE_EXPIRY = timedelta(seconds=30)  # 30 seconds (replay attack window)
+    NONCE_EXPIRY = timedelta(minutes=5)  # 5 minutes (synopsis requirement)
     NONCE_LENGTH = 32  # 32 bytes = 256 bits (256-bit random nonce)
     
     # Security
     MAX_LOGIN_ATTEMPTS = 5
     LOCKOUT_DURATION = timedelta(minutes=15)
+    RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'memory://')
 
 class DevelopmentConfig(Config):
     """Development configuration"""

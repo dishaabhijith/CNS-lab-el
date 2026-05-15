@@ -9,7 +9,7 @@ A modern authentication system using **post-quantum cryptography** instead of tr
 - ✅ **Replay Attack Prevention**: Nonce-based challenge-response mechanism (one-time use)
 - ✅ **Public Key Storage**: Server stores only public keys, never private keys
 - ✅ **Session Management**: Secure token-based sessions with expiration
-- ✅ **Multiple Crypto Backends**: Auto-detects liboqs, SPHINCS+, XMSS, or SHA256 simulation
+- ✅ **Multiple Crypto Backends**: Auto-detects liboqs, SPHINCS+, XMSS, with a browser-ready WOTS-SHA256 fallback
 - ✅ **Rate Limiting**: Protection against brute-force attacks
 - ✅ **Educational**: Easy to understand implementation suitable for student projects
 
@@ -43,7 +43,7 @@ This system uses **post-quantum resistant digital signatures** instead of passwo
 | SPHINCS+ | sphincsplus | Hash-based | ✅ Recommended |
 | XMSS | xmss-py | Hash-based | ✅ Fast |
 | ML-DSA | liboqs | Lattice-based | ✅ NIST Standard |
-| SHA256 Sim | native | Demo | ⚠️ Demo only |
+| WOTS-SHA256 | native Web Crypto/Python | Hash-based demo | ✅ Browser-ready |
 
 ### Install Real Post-Quantum (Optional)
 ```bash
@@ -52,7 +52,7 @@ pip install liboqs-python      # NIST-standardized
 pip install sphincsplus         # Hash-based
 pip install xmss-py             # Memory-efficient
 
-# System will use first available, fallback to SHA256 simulation
+# System reports installed PQC libraries and uses WOTS-SHA256 in the browser UI
 ```
 
 **For detailed cryptography explanation, see [POST_QUANTUM_GUIDE.md](POST_QUANTUM_GUIDE.md)**
@@ -140,7 +140,7 @@ Visit: `http://localhost:8000/frontend/index.html`
 ### Registration
 
 1. **Generate Keys**: Click "Generate Quantum-Safe Key Pair"
-   - Creates an XMSS keypair locally in your browser
+   - Creates a WOTS-SHA256 hash-based key bundle locally in your browser
    - Public key: Sent to server (stored in database)
    - Private key: Keep safe! (never sent to server)
 
@@ -187,7 +187,7 @@ Traditional encryption (RSA, ECDSA) could be broken by quantum computers using S
 
 1. Client receives nonce from server
 2. Create message: `username + nonce`
-3. Sign message with private key using HMAC-SHA256 (simplified for demo)
+3. Sign message with a one-time WOTS-SHA256 private-key slot
 4. Send signature to server
 
 ### Verification Process

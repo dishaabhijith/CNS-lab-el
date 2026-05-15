@@ -55,12 +55,31 @@ from flask import Blueprint, request, jsonify, current_app
 from datetime import datetime, timedelta
 import secrets
 import re
+import hmac
+import hashlib
 from functools import wraps
 
 from models import db, User, Nonce, Session, LoginAttempt
 from crypto_utils import QuantumSafeSignature, get_client_ip, get_user_agent
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    limiter = Limiter(key_func=get_remote_address)
+except ImportError:
+    limiter = None
+
+
+def rate_limit(rule: str):
+    """Apply Flask-Limiter limits when the optional dependency is installed."""
+    def decorator(func):
+        if limiter is None:
+            return func
+        return limiter.limit(rule)(func)
+    return decorator
 
 # ============================================================================
 # REPLAY ATTACK PROTECTION SUMMARY
@@ -77,10 +96,10 @@ LAYER 1: UNIQUE NONCE (Per-Request Freshness)
 
 LAYER 2: NONCE EXPIRATION (Time-Based Window)
 ==============================================
-- Nonce valid for only 30 seconds (tight security window)
-- Timestamp: created_at + 30s = expires_at
+- Nonce valid for the configured 5-minute window
+- Timestamp: created_at + NONCE_EXPIRY = expires_at
 - Server checks: current_time < expires_at before accepting
-- After 30s, even valid (nonce + signature) is rejected as expired
+- After expiry, even valid (nonce + signature) is rejected as expired
 - Limits time attacker has to successfully replay
 
 LAYER 3: SINGLE-USE ENFORCEMENT (Used Flag)
@@ -104,7 +123,7 @@ SCENARIO 2: Late Replay
 -----------------------
 t=0s   Attacker captures: alice + nonce + signature
 t=40s  Attacker resends: alice + nonce + signature
-       Check: used=False \u2713 (if first use), BUT expires_at=t+30s < 40s
+       Check: used=False \u2713 (if first use), BUT expires_at has passed
        Result: BLOCKED (expiration protection)
 
 SCENARIO 3: Man-in-the-Middle Modifies Signature
@@ -136,11 +155,12 @@ def validate_username(username: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9_]+$', username))
 
 def validate_public_key(public_key: str) -> bool:
-    """Validate public key format (must be valid hex)"""
-    if not public_key or len(public_key) != 64:  # 32 bytes = 64 hex chars
+    """Validate supported public-key envelopes."""
+    if not public_key:
         return False
+
     try:
-        bytes.fromhex(public_key)
+        QuantumSafeSignature.inspect_public_key(public_key)
         return True
     except ValueError:
         return False
@@ -148,6 +168,22 @@ def validate_public_key(public_key: str) -> bool:
 def get_session_token(length: int = 32) -> str:
     """Generate a secure session token"""
     return secrets.token_urlsafe(length)
+
+def hash_session_token(token: str) -> str:
+    """Store only an HMAC-SHA256 digest of bearer tokens server-side."""
+    secret = current_app.config['SECRET_KEY'].encode('utf-8')
+    return hmac.new(secret, token.encode('utf-8'), hashlib.sha256).hexdigest()
+
+def cleanup_expired_records() -> None:
+    """Keep nonce, session, and login-attempt tables from growing forever."""
+    now = datetime.utcnow()
+    lockout_window = current_app.config.get('LOCKOUT_DURATION', timedelta(minutes=15))
+
+    Nonce.query.filter(Nonce.expires_at < now).delete(synchronize_session=False)
+    Session.query.filter(Session.expires_at < now).delete(synchronize_session=False)
+    LoginAttempt.query.filter(
+        LoginAttempt.attempted_at < now - lockout_window
+    ).delete(synchronize_session=False)
 
 def check_rate_limit(username: str, ip_address: str, max_attempts: int = 5, 
                      window_minutes: int = 15) -> bool:
@@ -178,12 +214,13 @@ def require_session(f):
     """Decorator to verify session token"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        auth_header = request.headers.get('Authorization', '')
+        token = auth_header.replace('Bearer ', '', 1).strip() if auth_header.startswith('Bearer ') else ''
         
         if not token:
             return jsonify({'error': 'No session token provided'}), 401
         
-        session = Session.query.filter_by(session_token=token).first()
+        session = Session.query.filter_by(session_token=hash_session_token(token)).first()
         
         if not session or not session.is_valid():
             return jsonify({'error': 'Invalid or expired session'}), 401
@@ -195,10 +232,26 @@ def require_session(f):
     return decorated_function
 
 # ============================================================================
+# Algorithm Discovery Endpoint
+# ============================================================================
+
+@auth_bp.route('/algorithms', methods=['GET'])
+@rate_limit("60 per minute")
+def algorithms():
+    """Report available signature algorithms and runtime backend status."""
+    return jsonify({
+        'default_algorithm': 'WOTS-SHA256',
+        'best_installed_backend': QuantumSafeSignature.get_backend(),
+        'nonce_expires_in_seconds': int(current_app.config['NONCE_EXPIRY'].total_seconds()),
+        'supported_algorithms': QuantumSafeSignature.get_supported_algorithms()
+    }), 200
+
+# ============================================================================
 # Registration Endpoint
 # ============================================================================
 
 @auth_bp.route('/register', methods=['POST'])
+@rate_limit("10 per minute")
 def register():
     """
     Register a new user with a post-quantum public key.
@@ -278,6 +331,7 @@ def register():
         
         username = data.get('username', '').strip()
         public_key = data.get('public_key', '').strip()
+        requested_algorithm = data.get('algorithm', '').strip()
         
         # ==================================================================
         # VALIDATE USERNAME
@@ -294,7 +348,16 @@ def register():
         # For real post-quantum (SPHINCS+, XMSS), may be larger
         if not validate_public_key(public_key):
             return jsonify({
-                'error': 'Invalid public key format. Must be valid hex string'
+                'error': 'Invalid public key format or unsupported algorithm'
+            }), 400
+
+        key_info = QuantumSafeSignature.inspect_public_key(public_key)
+        signature_algorithm = key_info['algorithm']
+        signature_capacity = key_info.get('slots')
+
+        if requested_algorithm and requested_algorithm != signature_algorithm:
+            return jsonify({
+                'error': 'Algorithm does not match public key metadata'
             }), 400
         
         # ==================================================================
@@ -310,21 +373,26 @@ def register():
         # Public key is used to verify signatures during authentication
         user = User(
             username=username,
-            public_key=public_key
+            public_key=public_key,
+            signature_algorithm=signature_algorithm,
+            signature_counter=0,
+            signature_capacity=signature_capacity
         )
         
         db.session.add(user)
         db.session.commit()
         
         current_app.logger.info(
-            f"[AUTH] New user registered: {username} with {QuantumSafeSignature.get_backend()} public key"
+            f"[AUTH] New user registered: {username} with {signature_algorithm} public key"
         )
         
         return jsonify({
             'success': True,
             'user_id': user.id,
             'message': f'User {username} registered successfully',
-            'username': username
+            'username': username,
+            'algorithm': signature_algorithm,
+            'signature_capacity': signature_capacity
         }), 201
         
     except Exception as e:
@@ -337,6 +405,7 @@ def register():
 # ============================================================================
 
 @auth_bp.route('/nonce', methods=['POST'])
+@rate_limit("20 per minute")
 def get_nonce():
     """
     Request a unique nonce for challenge-response authentication.
@@ -353,7 +422,7 @@ def get_nonce():
     How Nonce Prevents This:
     - Each nonce is UNIQUE (256-bit random)
     - Each nonce is SINGLE-USE (used flag)
-    - Each nonce EXPIRES (30 seconds)
+- Each nonce EXPIRES (5 minutes by project requirement)
     
     Attack Timeline:
     ===============
@@ -362,14 +431,14 @@ def get_nonce():
     ---------------------------------
     t=0s   Client requests nonce
            Server generates: nonce="abc123xyz789"
-           Server stores: nonce, user_id, expires_at=t+30s, used=False
+           Server stores: nonce, user_id, expires_at=t+5min, used=False
            Returns nonce to client
     
     t=2s   Client signs: signature(username + "abc123xyz789")
            Client sends: username + nonce + signature
            Server checks:
              ✓ nonce exists? YES
-             ✓ nonce expired? NO (2s < 30s)
+             ✓ nonce expired? NO (inside 5-minute window)
              ✓ nonce used? NO
            Server marks: used=True
            Returns: session_token ✓ AUTHENTICATED
@@ -379,7 +448,7 @@ def get_nonce():
     t=5s   Attacker resends: username + nonce + signature (same data)
            Server checks:
              ✓ nonce exists? YES
-             ✗ nonce expired? NO (5s < 30s)
+             ✗ nonce expired? NO (inside 5-minute window)
              ✗ nonce used? YES (already used at t=2s!) ← BLOCKED!
            Returns: 401 Unauthorized ✗ REJECTED
     
@@ -388,7 +457,7 @@ def get_nonce():
     t=35s  Attacker resends: username + nonce + signature
            Server checks:
              ✓ nonce exists? YES
-             ✗ nonce expired? YES (35s > 30s) ← TIME EXPIRED!
+             ✗ nonce expired? YES (after 5-minute window) ← TIME EXPIRED!
              ? nonce used? (doesn't matter, already expired)
            Returns: 401 Unauthorized ✗ REJECTED
     
@@ -450,6 +519,8 @@ def get_nonce():
     }
     """
     try:
+        cleanup_expired_records()
+
         data = request.get_json()
         
         if not data:
@@ -468,6 +539,22 @@ def get_nonce():
         if not user:
             # Don't reveal if user exists (security best practice)
             return jsonify({'error': 'User not found'}), 404
+
+        key_capacity = QuantumSafeSignature.get_public_key_capacity(user.public_key)
+        key_index = None
+
+        if key_capacity is not None:
+            current_index = user.signature_counter or 0
+            if current_index >= key_capacity:
+                return jsonify({
+                    'error': 'Signature key bundle exhausted. Generate and register a new key bundle.',
+                    'algorithm': user.signature_algorithm,
+                    'signature_capacity': key_capacity,
+                    'signature_slots_remaining': 0
+                }), 409
+
+            key_index = current_index
+            user.signature_counter = current_index + 1
         
         # ==================================================================
         # GENERATE NONCE
@@ -490,6 +577,7 @@ def get_nonce():
         nonce = Nonce(
             user_id=user.id,
             nonce=nonce_value,
+            key_index=key_index,
             expires_at=expires_at
         )
         
@@ -505,7 +593,13 @@ def get_nonce():
             'nonce': nonce_value,
             'nonce_id': nonce.id,
             'username': username,
-            'expires_in_seconds': int(current_app.config['NONCE_EXPIRY'].total_seconds())
+            'expires_in_seconds': int(current_app.config['NONCE_EXPIRY'].total_seconds()),
+            'algorithm': user.signature_algorithm,
+            'key_index': key_index,
+            'signature_slots_remaining': (
+                max((key_capacity or 0) - (user.signature_counter or 0), 0)
+                if key_capacity is not None else None
+            )
         }), 200
         
     except Exception as e:
@@ -518,6 +612,7 @@ def get_nonce():
 # ============================================================================
 
 @auth_bp.route('/login', methods=['POST'])
+@rate_limit("10 per minute")
 def login():
     """
     Login with username and signed nonce using post-quantum signatures.
@@ -579,6 +674,8 @@ def login():
     }
     """
     try:
+        cleanup_expired_records()
+
         data = request.get_json()
         
         if not data:
@@ -594,7 +691,13 @@ def login():
         # ==================================================================
         # RATE LIMITING: Prevent brute-force attacks
         # ==================================================================
-        if check_rate_limit(username, client_ip):
+        lockout_window = current_app.config.get('LOCKOUT_DURATION', timedelta(minutes=15))
+        if check_rate_limit(
+            username,
+            client_ip,
+            current_app.config.get('MAX_LOGIN_ATTEMPTS', 5),
+            max(1, int(lockout_window.total_seconds() / 60))
+        ):
             return jsonify({
                 'error': 'Too many login attempts. Please try again later.'
             }), 429
@@ -624,8 +727,7 @@ def login():
         # A nonce is a single-use token that prevents replay attacks
         nonce_obj = Nonce.query.filter_by(
             user_id=user.id,
-            nonce=nonce,
-            used=False  # Must not have been used before
+            nonce=nonce
         ).first()
         
         if not nonce_obj or not nonce_obj.is_valid():
@@ -637,7 +739,7 @@ def login():
             #    - Attacker fabricated a nonce
             #    - Attacker is replaying with old nonce
             # 
-            # 2. Nonce expired (created_at + 30s < now)
+            # 2. Nonce expired (created_at + NONCE_EXPIRY < now)
             #    - Attacker waited too long to replay
             #    - Legitimate user lost connection (timeout)
             # 
@@ -685,7 +787,7 @@ def login():
         # ✗ Reuse same nonce (marked as used)
         # ✗ Generate new signature (doesn't have private key)
         # ✗ Modify message (signature won't verify)
-        # ✗ Use old nonce (expired after 30s)
+        # ✗ Use old nonce (expired after the configured TTL)
         # 
         # Each authentication requires:
         # 1. Fresh nonce from server
@@ -701,7 +803,8 @@ def login():
         is_signature_valid = QuantumSafeSignature.verify_signature(
             message_to_verify,
             signature,
-            public_key
+            public_key,
+            expected_key_index=nonce_obj.key_index
         )
         
         if is_signature_valid:
@@ -713,7 +816,7 @@ def login():
             
             current_app.logger.info(
                 f"[AUTH-SUCCESS] User {username} authenticated from {client_ip} "
-                f"using {QuantumSafeSignature.get_backend()} signature"
+                f"using {user.signature_algorithm} signature"
             )
         else:
             # SIGNATURE VERIFICATION FAILED
@@ -724,13 +827,14 @@ def login():
             # 3. Signature corrupted (transmission error)
             # 4. Replay with modified data (attacker changing message)
             
+            nonce_obj.used = True
             attempt = LoginAttempt(username=username, ip_address=client_ip, successful=False)
             db.session.add(attempt)
             db.session.commit()
             
             current_app.logger.warning(
-                f\"[REPLAY/FORGERY] Signature verification failed for {username} at {client_ip}. \"
-                f\"Could indicate: wrong key, tampering, or replay with modified data\"
+                f"[REPLAY/FORGERY] Signature verification failed for {username} at {client_ip}. "
+                f"Could indicate: wrong key, tampering, or replay with modified data"
             )
             return jsonify({'error': 'Authentication failed'}), 401
         
@@ -764,7 +868,6 @@ def login():
         # Even if attacker has the exact bytes of a valid request,
         # they can only use it ONCE before it's locked out!
         nonce_obj.used = True
-        nonce_obj.used = True
         
         # ==================================================================
         # STEP 5: CREATE SESSION
@@ -775,7 +878,7 @@ def login():
         
         session = Session(
             user_id=user.id,
-            session_token=session_token,
+            session_token=hash_session_token(session_token),
             expires_at=expires_at,
             ip_address=client_ip,
             user_agent=get_user_agent(request)
@@ -790,7 +893,7 @@ def login():
         
         current_app.logger.info(
             f"[AUTH] Successful login: {username} from {client_ip} "
-            f"using {QuantumSafeSignature.get_backend()} signature"
+            f"using {user.signature_algorithm} signature"
         )
         
         return jsonify({
@@ -800,7 +903,12 @@ def login():
             'username': user.username,
             'expires_at': expires_at.isoformat() + 'Z',
             'auth_method': 'post-quantum-signature',
-            'algorithm': QuantumSafeSignature.get_backend()
+            'algorithm': user.signature_algorithm,
+            'key_index': nonce_obj.key_index,
+            'signature_slots_remaining': (
+                max((user.signature_capacity or 0) - (user.signature_counter or 0), 0)
+                if user.signature_capacity is not None else None
+            )
         }), 200
         
     except Exception as e:
@@ -834,7 +942,12 @@ def verify():
             'valid': True,
             'user_id': request.current_user.id,
             'username': request.current_user.username,
-            'expires_at': request.current_session.expires_at.isoformat() + 'Z'
+            'expires_at': request.current_session.expires_at.isoformat() + 'Z',
+            'algorithm': request.current_user.signature_algorithm,
+            'signature_slots_remaining': (
+                max((request.current_user.signature_capacity or 0) - (request.current_user.signature_counter or 0), 0)
+                if request.current_user.signature_capacity is not None else None
+            )
         }), 200
         
     except Exception as e:
@@ -901,7 +1014,10 @@ def get_user_info():
             'user_id': request.current_user.id,
             'username': request.current_user.username,
             'created_at': request.current_user.created_at.isoformat() + 'Z',
-            'is_active': request.current_user.is_active
+            'is_active': request.current_user.is_active,
+            'algorithm': request.current_user.signature_algorithm,
+            'signature_capacity': request.current_user.signature_capacity,
+            'signature_counter': request.current_user.signature_counter
         }), 200
         
     except Exception as e:

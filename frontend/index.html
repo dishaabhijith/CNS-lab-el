@@ -31,7 +31,7 @@
                         <button type="button" id="generateKeysBtn" class="btn btn-secondary">
                             Generate Quantum-Safe Key Pair
                         </button>
-                        <small>Creates a new XMSS keypair for authentication</small>
+                        <small>Creates a WOTS-SHA256 hash-based signature bundle for browser authentication</small>
                     </div>
 
                     <div class="form-group">
@@ -110,23 +110,25 @@
                     <p><strong>User ID:</strong> <code id="dashboardUserId"></code></p>
                     <p><strong>Session Token:</strong> <code id="dashboardToken"></code></p>
                     <p><strong>Expires At:</strong> <span id="dashboardExpires"></span></p>
+                    <p><strong>Algorithm:</strong> <span id="dashboardAlgorithm"></span></p>
+                    <p><strong>Signature Slots Remaining:</strong> <span id="dashboardSlotsRemaining"></span></p>
                 </div>
 
                 <div class="info-card">
                     <h3>Authentication Method</h3>
-                    <p>✓ Post-Quantum Digital Signature (XMSS)</p>
-                    <p>✓ Nonce-based Challenge-Response</p>
-                    <p>✓ No Password Storage</p>
-                    <p>✓ Replay Attack Prevention</p>
+                    <p>Post-quantum digital signature using hash-based WOTS-style keys</p>
+                    <p>Nonce-based challenge-response with 5-minute expiry</p>
+                    <p>No password or private-key storage on the server</p>
+                    <p>Replay attack prevention with single-use challenges</p>
                 </div>
 
                 <div class="info-card">
                     <h3>How This Works</h3>
                     <ol>
-                        <li>You generated a quantum-safe key pair (XMSS)</li>
+                        <li>You generated a quantum-safe hash-based key bundle</li>
                         <li>Your public key is stored on the server</li>
                         <li>To login, the server sends you a unique nonce</li>
-                        <li>You sign the nonce with your private key</li>
+                        <li>You sign the nonce with a one-time private key slot</li>
                         <li>Server verifies the signature using your public key</li>
                         <li>If valid, you're authenticated (no password needed!)</li>
                     </ol>

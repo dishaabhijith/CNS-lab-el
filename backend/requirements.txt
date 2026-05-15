@@ -1,7 +1,9 @@
 # Core Flask dependencies
 Flask==3.0.0
 Flask-CORS==4.0.0
-SQLAlchemy==2.0.23
+Flask-SQLAlchemy==3.1.1
+Flask-Limiter==3.7.0
+SQLAlchemy==2.0.49
 python-dotenv==1.0.0
 cryptography==41.0.7
 
@@ -23,8 +25,8 @@ cryptography==41.0.7
 # Installation: pip install xmss-py
 # xmss-py>=1.1.0
 
-# If no post-quantum library is installed, the system will use
-# SHA256-based simulation for demonstration purposes.
+# If no post-quantum library is installed, the browser flow uses
+# WOTS-SHA256 hash-based signatures for demonstration purposes.
 
 # Installation instructions:
 # 1. Create virtual environment: python -m venv venv

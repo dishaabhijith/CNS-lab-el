@@ -46,9 +46,10 @@ import logging
 import os
 
 from config import config
-from models import db
-from auth_routes import auth_bp
+from models import db, User
+from auth_routes import auth_bp, limiter as auth_limiter
 from crypto_utils import QuantumSafeSignature
+from sqlalchemy import inspect, text
 
 # ============================================================================
 # Application Factory
@@ -73,6 +74,8 @@ def create_app(config_name: str = None) -> Flask:
     # Initialize extensions
     db.init_app(app)
     CORS(app, resources={r"/auth/*": {"origins": "*"}})
+    if auth_limiter is not None:
+        auth_limiter.init_app(app)
     
     # Setup logging
     setup_logging(app)
@@ -83,12 +86,65 @@ def create_app(config_name: str = None) -> Flask:
     # Register error handlers
     register_error_handlers(app)
     
+    # ================================================================
+    # Shell Context & Routes
+    # ================================================================
+    
+    @app.shell_context_processor
+    def make_shell_context():
+        """Provide convenient imports for flask shell"""
+        return {
+            'db': db,
+            'User': User,
+            'crypto': QuantumSafeSignature
+        }
+    
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        """Health check endpoint"""
+        return jsonify({
+            'status': 'ok',
+            'service': 'Quantum-Resistant Authentication System',
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }), 200
+    
     # Create application context and initialize database
     with app.app_context():
         db.create_all()
+        ensure_schema()
         app.logger.info(f"Database initialized for {config_name} environment")
     
     return app
+
+
+def ensure_schema() -> None:
+    """Add columns introduced after the original classroom prototype."""
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+
+    if 'users' in tables:
+        user_columns = {column['name'] for column in inspector.get_columns('users')}
+        with db.engine.begin() as connection:
+            if 'signature_algorithm' not in user_columns:
+                connection.execute(text(
+                    "ALTER TABLE users ADD COLUMN signature_algorithm VARCHAR(64) "
+                    "NOT NULL DEFAULT 'WOTS-SHA256'"
+                ))
+            if 'signature_counter' not in user_columns:
+                connection.execute(text(
+                    "ALTER TABLE users ADD COLUMN signature_counter INTEGER "
+                    "NOT NULL DEFAULT 0"
+                ))
+            if 'signature_capacity' not in user_columns:
+                connection.execute(text(
+                    "ALTER TABLE users ADD COLUMN signature_capacity INTEGER"
+                ))
+
+    if 'nonces' in tables:
+        nonce_columns = {column['name'] for column in inspector.get_columns('nonces')}
+        if 'key_index' not in nonce_columns:
+            with db.engine.begin() as connection:
+                connection.execute(text("ALTER TABLE nonces ADD COLUMN key_index INTEGER"))
 
 # ============================================================================
 # Logging Setup
@@ -146,31 +202,6 @@ def register_error_handlers(app: Flask) -> None:
         app.logger.error(f'Internal server error: {str(error)}')
         return jsonify({'error': 'Internal server error'}), 500
 
-# ============================================================================
-# CLI Commands
-# ============================================================================
-
-@app.shell_context_processor
-def make_shell_context():
-    """Provide convenient imports for flask shell"""
-    return {
-        'db': db,
-        'User': db.Model.registry.mappers[0].class_ if db.Model.registry.mappers else None,
-        'crypto': QuantumSafeSignature
-    }
-
-# ============================================================================
-# Health Check Endpoint
-# ============================================================================
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'ok',
-        'service': 'Quantum-Resistant Authentication System',
-        'timestamp': datetime.utcnow().isoformat() + 'Z'
-    }), 200
 
 # ============================================================================
 # Main Entry Point
