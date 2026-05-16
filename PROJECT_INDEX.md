@@ -15,6 +15,17 @@
   - Quick reference guide
   - Learning resources
 
+- **[PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)**
+  - Hardened controls now present in the prototype
+  - Production environment checklist
+  - Remaining work before real-world deployment
+
+- **[DEMO_AND_FEATURES.md](DEMO_AND_FEATURES.md)**
+  - Frontend and backend feature summary
+  - College demo flow
+  - Quantum-resistance explanation
+  - Attack demonstrations and presentation script
+
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**
   - Detailed system design
   - Registration and login flows (diagrams)
@@ -81,7 +92,27 @@
 
 ## 🎨 Frontend Files
 
-### HTML
+### Vite Frontend
+- **`frontend/package.json`**
+  - Vite, React, and Lucide dependencies
+  - `npm run dev`, `npm run build`, and `npm run preview`
+
+- **`frontend/src/App.jsx`**
+  - Registration, login, and session dashboard workspaces
+  - Runtime algorithm panel
+  - Nonce/signature telemetry
+  - API activity stream
+
+- **`frontend/src/lib/quantumCrypto.js`**
+  - Browser WOTS-SHA256 key generation
+  - One-time signature generation
+  - Key import/export and metadata helpers
+
+- **`frontend/src/styles.css`**
+  - Responsive console UI
+  - Form, key, telemetry, and dashboard surfaces
+
+### Legacy HTML
 - **`frontend/index.html`** (180 lines)
   - Single-page application
   - Registration form with key generation

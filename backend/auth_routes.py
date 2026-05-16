@@ -52,14 +52,15 @@ Endpoints:
 """
 
 from flask import Blueprint, request, jsonify, current_app
-from datetime import datetime, timedelta
+from datetime import timedelta
 import secrets
 import re
 import hmac
 import hashlib
 from functools import wraps
+from typing import Any, Dict, Optional, Tuple
 
-from models import db, User, Nonce, Session, LoginAttempt
+from models import db, User, Nonce, Session, LoginAttempt, utcnow
 from crypto_utils import QuantumSafeSignature, get_client_ip, get_user_agent
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -154,6 +155,34 @@ def validate_username(username: str) -> bool:
     # Alphanumeric and underscore only
     return bool(re.match(r'^[a-zA-Z0-9_]+$', username))
 
+def normalize_text(value: Any, max_chars: Optional[int] = None) -> str:
+    """Return a stripped string only when the input is already textual."""
+    if not isinstance(value, str):
+        return ''
+    normalized = value.strip()
+    if max_chars is not None and len(normalized) > max_chars:
+        return ''
+    return normalized
+
+def get_json_payload() -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Any, int]]]:
+    """Parse a JSON object and return a Flask response tuple on failure."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return None, (jsonify({'error': 'JSON request body required'}), 400)
+    if not isinstance(data, dict):
+        return None, (jsonify({'error': 'JSON request body must be an object'}), 400)
+    return data, None
+
+def validate_nonce_value(nonce: str) -> bool:
+    """Validate the configured hex nonce shape before database lookup."""
+    expected_length = int(current_app.config.get('NONCE_LENGTH', 32)) * 2
+    return bool(nonce and re.fullmatch(r'[0-9a-f]+', nonce) and len(nonce) == expected_length)
+
+def validate_signature_payload(signature: str) -> bool:
+    """Reject obviously malformed or oversized signatures before verification."""
+    max_chars = current_app.config.get('MAX_SIGNATURE_CHARS', 96 * 1024)
+    return bool(signature and len(signature) <= max_chars)
+
 def validate_public_key(public_key: str) -> bool:
     """Validate supported public-key envelopes."""
     if not public_key:
@@ -165,8 +194,10 @@ def validate_public_key(public_key: str) -> bool:
     except ValueError:
         return False
 
-def get_session_token(length: int = 32) -> str:
+def get_session_token(length: Optional[int] = None) -> str:
     """Generate a secure session token"""
+    if length is None:
+        length = int(current_app.config.get('SESSION_TOKEN_BYTES', 32))
     return secrets.token_urlsafe(length)
 
 def hash_session_token(token: str) -> str:
@@ -176,7 +207,7 @@ def hash_session_token(token: str) -> str:
 
 def cleanup_expired_records() -> None:
     """Keep nonce, session, and login-attempt tables from growing forever."""
-    now = datetime.utcnow()
+    now = utcnow()
     lockout_window = current_app.config.get('LOCKOUT_DURATION', timedelta(minutes=15))
 
     Nonce.query.filter(Nonce.expires_at < now).delete(synchronize_session=False)
@@ -199,7 +230,7 @@ def check_rate_limit(username: str, ip_address: str, max_attempts: int = 5,
     Returns:
         bool: True if rate limit exceeded, False otherwise
     """
-    cutoff_time = datetime.utcnow() - timedelta(minutes=window_minutes)
+    cutoff_time = utcnow() - timedelta(minutes=window_minutes)
     
     recent_failures = LoginAttempt.query.filter(
         LoginAttempt.username == username,
@@ -219,10 +250,26 @@ def require_session(f):
         
         if not token:
             return jsonify({'error': 'No session token provided'}), 401
+
+        if len(token) > 512:
+            return jsonify({'error': 'Invalid or expired session'}), 401
         
         session = Session.query.filter_by(session_token=hash_session_token(token)).first()
         
         if not session or not session.is_valid():
+            return jsonify({'error': 'Invalid or expired session'}), 401
+
+        client_ip = get_client_ip(
+            request,
+            trust_proxy_headers=current_app.config.get('TRUST_PROXY_HEADERS', False)
+        )
+        if current_app.config.get('BIND_SESSION_TO_IP') and session.ip_address != client_ip:
+            return jsonify({'error': 'Invalid or expired session'}), 401
+
+        if (
+            current_app.config.get('BIND_SESSION_TO_USER_AGENT')
+            and session.user_agent != get_user_agent(request)
+        ):
             return jsonify({'error': 'Invalid or expired session'}), 401
         
         request.current_user = session.user
@@ -324,14 +371,16 @@ def register():
     }
     """
     try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        username = data.get('username', '').strip()
-        public_key = data.get('public_key', '').strip()
-        requested_algorithm = data.get('algorithm', '').strip()
+        data, error_response = get_json_payload()
+        if error_response:
+            return error_response
+
+        username = normalize_text(data.get('username'))
+        public_key = normalize_text(
+            data.get('public_key'),
+            current_app.config.get('MAX_PUBLIC_KEY_CHARS', 96 * 1024)
+        )
+        requested_algorithm = normalize_text(data.get('algorithm'), 64)
         
         # ==================================================================
         # VALIDATE USERNAME
@@ -346,6 +395,9 @@ def register():
         # ==================================================================
         # Public key should be 64 hex characters (32 bytes) for SHA256-based keys
         # For real post-quantum (SPHINCS+, XMSS), may be larger
+        if not public_key:
+            return jsonify({'error': 'Public key is missing or too large'}), 400
+
         if not validate_public_key(public_key):
             return jsonify({
                 'error': 'Invalid public key format or unsupported algorithm'
@@ -521,24 +573,22 @@ def get_nonce():
     try:
         cleanup_expired_records()
 
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        username = data.get('username', '').strip()
-        
-        if not username:
-            return jsonify({'error': 'Username required'}), 400
+        data, error_response = get_json_payload()
+        if error_response:
+            return error_response
+
+        username = normalize_text(data.get('username'))
+
+        if not validate_username(username):
+            return jsonify({'error': 'Authentication challenge unavailable'}), 401
         
         # ==================================================================
         # FIND USER
         # ==================================================================
-        user = User.query.filter_by(username=username, is_active=True).first()
+        user = User.query.with_for_update().filter_by(username=username, is_active=True).first()
         
         if not user:
-            # Don't reveal if user exists (security best practice)
-            return jsonify({'error': 'User not found'}), 404
+            return jsonify({'error': 'Authentication challenge unavailable'}), 401
 
         key_capacity = QuantumSafeSignature.get_public_key_capacity(user.public_key)
         key_index = None
@@ -568,7 +618,7 @@ def get_nonce():
         # ==================================================================
         # Nonce valid for 5 minutes (standard for security)
         # After this, even if client signs it, server will reject as expired
-        expires_at = datetime.utcnow() + current_app.config['NONCE_EXPIRY']
+        expires_at = utcnow() + current_app.config['NONCE_EXPIRY']
         
         # ==================================================================
         # STORE NONCE IN DATABASE
@@ -676,17 +726,22 @@ def login():
     try:
         cleanup_expired_records()
 
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        username = data.get('username', '').strip()
-        nonce = data.get('nonce', '').strip()
-        signature = data.get('signature', '').strip()
+        data, error_response = get_json_payload()
+        if error_response:
+            return error_response
+
+        username = normalize_text(data.get('username'))
+        nonce = normalize_text(data.get('nonce'), int(current_app.config.get('NONCE_LENGTH', 32)) * 2)
+        signature = normalize_text(
+            data.get('signature'),
+            current_app.config.get('MAX_SIGNATURE_CHARS', 96 * 1024)
+        )
         
         # Get client IP for rate limiting and security logging
-        client_ip = get_client_ip(request)
+        client_ip = get_client_ip(
+            request,
+            trust_proxy_headers=current_app.config.get('TRUST_PROXY_HEADERS', False)
+        )
         
         # ==================================================================
         # RATE LIMITING: Prevent brute-force attacks
@@ -707,6 +762,15 @@ def login():
         # ==================================================================
         if not username or not nonce or not signature:
             return jsonify({'error': 'Username, nonce, and signature required'}), 400
+
+        if not validate_username(username):
+            return jsonify({'error': 'Authentication failed'}), 401
+
+        if not validate_nonce_value(nonce):
+            return jsonify({'error': 'Invalid or expired nonce'}), 401
+
+        if not validate_signature_payload(signature):
+            return jsonify({'error': 'Authentication failed'}), 401
         
         # ==================================================================
         # STEP 1: FIND USER
@@ -725,7 +789,7 @@ def login():
         # STEP 2: VALIDATE NONCE
         # ==================================================================
         # A nonce is a single-use token that prevents replay attacks
-        nonce_obj = Nonce.query.filter_by(
+        nonce_obj = Nonce.query.with_for_update().filter_by(
             user_id=user.id,
             nonce=nonce
         ).first()
@@ -760,6 +824,20 @@ def login():
             )
             
             return jsonify({'error': 'Invalid or expired nonce'}), 401
+
+        claimed = Nonce.query.filter(
+            Nonce.id == nonce_obj.id,
+            Nonce.used == False,
+            Nonce.expires_at > utcnow()
+        ).update({'used': True}, synchronize_session=False)
+
+        if claimed != 1:
+            attempt = LoginAttempt(username=username, ip_address=client_ip, successful=False)
+            db.session.add(attempt)
+            db.session.commit()
+            return jsonify({'error': 'Invalid or expired nonce'}), 401
+
+        db.session.flush()
         
         # ==================================================================
         # STEP 3: VERIFY POST-QUANTUM SIGNATURE
@@ -874,7 +952,7 @@ def login():
         # ==================================================================
         # User authenticated! Create session token
         session_token = get_session_token()
-        expires_at = datetime.utcnow() + current_app.config['PERMANENT_SESSION_LIFETIME']
+        expires_at = utcnow() + current_app.config['PERMANENT_SESSION_LIFETIME']
         
         session = Session(
             user_id=user.id,

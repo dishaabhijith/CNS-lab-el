@@ -39,9 +39,9 @@ Security Stack:
 - Logging: Security events logged with IP/user-agent
 """
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import os
 
@@ -50,6 +50,7 @@ from models import db, User
 from auth_routes import auth_bp, limiter as auth_limiter
 from crypto_utils import QuantumSafeSignature
 from sqlalchemy import inspect, text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # ============================================================================
 # Application Factory
@@ -70,10 +71,24 @@ def create_app(config_name: str = None) -> Flask:
     
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+    validate_runtime_config(app, config_name)
+
+    if app.config.get('TRUST_PROXY_HEADERS'):
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
     
     # Initialize extensions
     db.init_app(app)
-    CORS(app, resources={r"/auth/*": {"origins": "*"}})
+    CORS(
+        app,
+        resources={
+            r"/auth/*": {
+                "origins": app.config['CORS_ORIGINS'],
+                "methods": ["GET", "POST", "OPTIONS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "max_age": 600,
+            }
+        },
+    )
     if auth_limiter is not None:
         auth_limiter.init_app(app)
     
@@ -85,6 +100,7 @@ def create_app(config_name: str = None) -> Flask:
     
     # Register error handlers
     register_error_handlers(app)
+    register_security_headers(app)
     
     # ================================================================
     # Shell Context & Routes
@@ -105,7 +121,7 @@ def create_app(config_name: str = None) -> Flask:
         return jsonify({
             'status': 'ok',
             'service': 'Quantum-Resistant Authentication System',
-            'timestamp': datetime.utcnow().isoformat() + 'Z'
+            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         }), 200
     
     # Create application context and initialize database
@@ -115,6 +131,57 @@ def create_app(config_name: str = None) -> Flask:
         app.logger.info(f"Database initialized for {config_name} environment")
     
     return app
+
+
+def validate_runtime_config(app: Flask, config_name: str) -> None:
+    """Fail fast for unsafe production settings."""
+    if config_name != 'production':
+        return
+
+    if app.config.get('SECRET_KEY') == app.config.get('DEFAULT_DEV_SECRET'):
+        raise RuntimeError('SECRET_KEY must be set to a strong unique value in production')
+
+    if not os.environ.get('CORS_ORIGINS'):
+        raise RuntimeError('CORS_ORIGINS must be set explicitly in production')
+
+    if app.config.get('CORS_ORIGINS') == '*':
+        raise RuntimeError('CORS_ORIGINS must be an explicit allowlist in production')
+
+    if str(app.config.get('SQLALCHEMY_DATABASE_URI', '')).startswith('sqlite:'):
+        raise RuntimeError('DATABASE_URL must point to a production database in production')
+
+    if not app.config.get('SESSION_COOKIE_SECURE'):
+        raise RuntimeError('SESSION_COOKIE_SECURE must be enabled in production')
+
+
+def register_security_headers(app: Flask) -> None:
+    """Attach conservative security headers to every response."""
+    if not app.config.get('SECURITY_HEADERS_ENABLED', True):
+        return
+
+    @app.after_request
+    def add_security_headers(response):
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'DENY')
+        response.headers.setdefault('Referrer-Policy', 'no-referrer')
+        response.headers.setdefault(
+            'Permissions-Policy',
+            'camera=(), microphone=(), geolocation=(), payment=()'
+        )
+        response.headers.setdefault('Cache-Control', 'no-store')
+
+        csp = app.config.get('CONTENT_SECURITY_POLICY')
+        if csp:
+            response.headers.setdefault('Content-Security-Policy', csp)
+
+        if app.config.get('HSTS_ENABLED') and request.is_secure:
+            max_age = int(app.config.get('HSTS_MAX_AGE', 31536000))
+            response.headers.setdefault(
+                'Strict-Transport-Security',
+                f'max-age={max_age}; includeSubDomains'
+            )
+
+        return response
 
 
 def ensure_schema() -> None:
@@ -196,6 +263,10 @@ def register_error_handlers(app: Flask) -> None:
     @app.errorhandler(429)
     def rate_limit_exceeded(error):
         return jsonify({'error': 'Too many requests. Please try again later.'}), 429
+
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        return jsonify({'error': 'Request body too large'}), 413
     
     @app.errorhandler(500)
     def internal_error(error):

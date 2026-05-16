@@ -86,20 +86,19 @@ Running on http://127.0.0.1:5000
 Open a **new terminal window** (keep backend running in the first):
 
 ```bash
-# Navigate to project root (not backend)
-cd ..
+# Navigate to the Vite frontend
+cd frontend
 
-# Start a local web server
-# Using Python 3:
-python -m http.server 8000
+# Install dependencies once
+npm install
 
-# Or using Node.js (if installed):
-npx http-server -p 8000
+# Start Vite
+npm run dev
 ```
 
 You should see:
 ```
-Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/)
+Local: http://127.0.0.1:5173/
 ```
 
 ### Step 5: Access the Application
@@ -107,7 +106,7 @@ Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/)
 Open your web browser and go to:
 
 ```
-http://localhost:8000/frontend/index.html
+http://127.0.0.1:5173
 ```
 
 You should see the quantum-resistant authentication interface! 🎉
@@ -116,39 +115,33 @@ You should see the quantum-resistant authentication interface! 🎉
 
 ### Test Flow 1: Complete Registration & Login
 
-1. **Go to the Registration tab** (should be active by default)
+1. **Go to the Register workspace** (active by default)
 
 2. **Generate Keys**:
-   - Click "Generate Quantum-Safe Key Pair"
-   - Wait for keys to appear in the text areas
-   - Public key and private key will be displayed
+   - Click "Generate keys"
+   - Public and private key JSON will appear with size and slot metadata
 
 3. **Save Your Private Key**:
-   - Click "Download Private Key" to save it securely
-   - Or click "Copy to Clipboard" to copy manually
+   - Click the download button on the private material pane
+   - Or copy it from the private key JSON field
 
 4. **Create Account**:
    - Enter a username (e.g., `alice`)
-   - Click "Register"
-   - You should see "Account registered!" message
+   - Click "Register public key"
+   - The console switches to the login workspace
 
-5. **Switch to Login Tab**:
-   - Click "Already have an account? Login"
-   - Or reload the page to clear the registration form
-
-6. **Login**:
+5. **Login**:
    - Enter your username
    - Paste your private key in the text area
-   - Click "Login with Digital Signature"
+   - Click "Authenticate"
    - System will:
      - Request nonce from server
      - Sign it with your private key
      - Send signature for verification
-   - If successful, you'll see the Dashboard
+   - If successful, you'll see the session dashboard
 
-7. **View Dashboard**:
-   - See session information
-   - Learn how the authentication works
+6. **View Dashboard**:
+   - See session information, slot usage, runtime algorithm status, and API activity
    - Click "Logout" to end session
 
 ### Test Flow 2: Wrong Private Key (Should Fail)

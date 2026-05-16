@@ -59,6 +59,10 @@ pip install xmss-py             # Memory-efficient
 
 **For replay attack prevention details, see [REPLAY_ATTACK_PREVENTION.md](REPLAY_ATTACK_PREVENTION.md)**
 
+**For deployment hardening status, see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)**
+
+**For demo flow and feature explanation, see [DEMO_AND_FEATURES.md](DEMO_AND_FEATURES.md)**
+
 ## 📋 Project Structure
 
 ```
@@ -70,7 +74,7 @@ quantum-auth-system/
 │   ├── crypto_utils.py     # Cryptographic functions
 │   ├── config.py           # Configuration management
 │   └── requirements.txt    # Python dependencies
-├── frontend/               # HTML/JavaScript frontend
+├── frontend/               # Vite + React frontend
 │   ├── index.html          # Single-page application
 │   ├── js/
 │   │   ├── crypto.js       # Client-side key generation & signing
@@ -116,30 +120,24 @@ The backend will start at `http://localhost:5000`
 
 ### 2. Frontend Setup
 
-**Option A: Simple HTTP Server (Recommended)**
-
 ```bash
-# Navigate to project root
-cd ..
+# Navigate to frontend directory
+cd frontend
 
-# Using Python 3
-python -m http.server 8000
+# Install dependencies
+npm install
 
-# Using Node.js
-npx http-server -p 8000
+# Run Vite dev server
+npm run dev
 ```
 
-**Option B: Direct File Access**
-
-Open `frontend/index.html` directly in your browser (limited functionality with CORS)
-
-Visit: `http://localhost:8000/frontend/index.html`
+Visit: `http://127.0.0.1:5173`
 
 ## 📖 Usage Guide
 
 ### Registration
 
-1. **Generate Keys**: Click "Generate Quantum-Safe Key Pair"
+1. **Generate Keys**: Click "Generate keys"
    - Creates a WOTS-SHA256 hash-based key bundle locally in your browser
    - Public key: Sent to server (stored in database)
    - Private key: Keep safe! (never sent to server)
@@ -148,7 +146,7 @@ Visit: `http://localhost:8000/frontend/index.html`
    - ⚠️ **CRITICAL**: You need this to login!
    - Store securely (password manager or encrypted file)
 
-3. **Register**: Submit the form
+3. **Register**: Click "Register public key"
    - Username and public key sent to server
    - Account is created
 
@@ -165,7 +163,7 @@ Visit: `http://localhost:8000/frontend/index.html`
    - Server verifies signature using stored public key
    - If valid, session is created
 
-3. **Access Dashboard**: View session information and learn how it works
+3. **Access Dashboard**: View session, runtime, nonce, signature, and API activity panels
 
 ### Logout
 

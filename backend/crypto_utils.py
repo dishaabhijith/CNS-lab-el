@@ -9,8 +9,10 @@ web app can verify signatures without storing any client secret on the server.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
+import re
 import secrets
 from typing import Dict, List, Optional, Tuple
 
@@ -57,8 +59,13 @@ def _b64url_encode(data: bytes) -> str:
 
 
 def _b64url_decode(data: str) -> bytes:
+    if not isinstance(data, str) or not re.fullmatch(r"[A-Za-z0-9_-]*", data):
+        raise ValueError("value is not valid base64url")
     padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
+    try:
+        return base64.urlsafe_b64decode(data + padding)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("value is not valid base64url") from exc
 
 
 def _loads_json(value: str) -> Dict:
@@ -91,6 +98,7 @@ WOTS_LEN1 = 64  # SHA-256 digest as 64 base-16 digits.
 WOTS_LEN2 = 3   # Checksum max is 64 * 15 = 960, which fits in 3 nibbles.
 WOTS_LEN = WOTS_LEN1 + WOTS_LEN2
 DEFAULT_WOTS_SLOTS = 16
+MAX_WOTS_SLOTS = 256
 
 
 def _sha256(data: bytes) -> bytes:
@@ -134,9 +142,12 @@ def _parse_wots_key(value: str, expected_type: str) -> Dict:
     if payload.get("algorithm") != WOTS_ALGORITHM:
         raise ValueError("unsupported WOTS algorithm")
 
-    slots = int(payload.get("slots", 0))
-    if slots <= 0:
-        raise ValueError("key must contain at least one signature slot")
+    try:
+        slots = int(payload.get("slots", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("signature slot count must be an integer") from exc
+    if slots <= 0 or slots > MAX_WOTS_SLOTS:
+        raise ValueError(f"key must contain between 1 and {MAX_WOTS_SLOTS} signature slots")
 
     key_material = _b64url_decode(str(payload.get("key", "")))
     if len(key_material) != _expected_wots_blob_size(slots):
@@ -158,7 +169,10 @@ def _parse_wots_signature(signature: str) -> Dict:
     if payload.get("algorithm") != WOTS_ALGORITHM:
         raise ValueError("unsupported signature algorithm")
 
-    slot = int(payload.get("slot", -1))
+    try:
+        slot = int(payload.get("slot", -1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("signature slot must be an integer") from exc
     signature_material = _b64url_decode(str(payload.get("signature", "")))
 
     if len(signature_material) != WOTS_LEN * WOTS_SECRET_SIZE:
@@ -172,8 +186,8 @@ def _parse_wots_signature(signature: str) -> Dict:
 
 
 def _generate_wots_keypair(slots: int = DEFAULT_WOTS_SLOTS) -> Tuple[str, str]:
-    if slots <= 0:
-        raise ValueError("slots must be positive")
+    if slots <= 0 or slots > MAX_WOTS_SLOTS:
+        raise ValueError(f"slots must be between 1 and {MAX_WOTS_SLOTS}")
 
     private_material = secrets.token_bytes(_expected_wots_blob_size(slots))
     public_parts = bytearray(len(private_material))
@@ -484,9 +498,9 @@ class QuantumSafeSignature:
 # Request Helpers
 # ============================================================================
 
-def get_client_ip(request) -> str:
+def get_client_ip(request, trust_proxy_headers: bool = False) -> str:
     forwarded_for = request.headers.getlist("X-Forwarded-For")
-    if forwarded_for:
+    if trust_proxy_headers and forwarded_for:
         return forwarded_for[0].split(",", 1)[0].strip()
     return request.remote_addr or "unknown"
 

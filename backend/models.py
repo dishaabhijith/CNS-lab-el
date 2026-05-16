@@ -1,8 +1,13 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
 import uuid
 
 db = SQLAlchemy()
+
+
+def utcnow() -> datetime:
+    """Return naive UTC datetimes for SQLAlchemy compatibility."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class User(db.Model):
     """User model - stores username and public key instead of password"""
@@ -14,7 +19,7 @@ class User(db.Model):
     signature_algorithm = db.Column(db.String(64), nullable=False, default='WOTS-SHA256')
     signature_counter = db.Column(db.Integer, nullable=False, default=0)
     signature_capacity = db.Column(db.Integer, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
     # Relationships
@@ -69,7 +74,7 @@ class Nonce(db.Model):
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
     nonce = db.Column(db.String(256), nullable=False, unique=True)  # Random, unique, hex-encoded
     key_index = db.Column(db.Integer, nullable=True)  # One-time signature slot assigned to this challenge
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)  # Tight TTL prevents late replay
     used = db.Column(db.Boolean, default=False)  # Single-use enforcement
     
@@ -87,7 +92,7 @@ class Nonce(db.Model):
         
         Returns: True if past expires_at time
         """
-        return datetime.utcnow() > self.expires_at
+        return utcnow() > self.expires_at
     
     def is_valid(self) -> bool:
         """
@@ -115,7 +120,7 @@ class Session(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
     session_token = db.Column(db.String(256), nullable=False, unique=True, index=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
     ip_address = db.Column(db.String(45), nullable=True)  # IPv4 or IPv6
     user_agent = db.Column(db.String(256), nullable=True)
@@ -125,11 +130,11 @@ class Session(db.Model):
     
     def is_valid(self):
         """Check if session is still valid"""
-        return datetime.utcnow() < self.expires_at
+        return utcnow() < self.expires_at
     
     def is_expired(self):
         """Check if session has expired"""
-        return datetime.utcnow() > self.expires_at
+        return utcnow() > self.expires_at
 
 class LoginAttempt(db.Model):
     """Track login attempts for rate limiting"""
@@ -139,7 +144,7 @@ class LoginAttempt(db.Model):
     username = db.Column(db.String(80), nullable=False, index=True)
     ip_address = db.Column(db.String(45), nullable=False)
     successful = db.Column(db.Boolean, default=False)
-    attempted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    attempted_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     
     def __repr__(self):
         return f'<LoginAttempt {self.username} from {self.ip_address}>'
