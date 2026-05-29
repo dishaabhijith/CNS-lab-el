@@ -84,6 +84,12 @@ function formatDuration(seconds) {
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
+function formatSlots(value) {
+  if (value === null) return 'Stateless';
+  if (value === undefined || value === '') return 'Unknown';
+  return value;
+}
+
 function safeJsonSummary(value) {
   try {
     return QuantumCrypto.summarizeJson(value);
@@ -227,7 +233,7 @@ function RuntimePanel({ health, algorithms, onRefresh, loading }) {
         <Metric
           icon={Fingerprint}
           label="Browser Default"
-          value={algorithms?.default_algorithm || QuantumCrypto.WOTS_ALGORITHM}
+          value={algorithms?.default_algorithm || QuantumCrypto.DEFAULT_ALGORITHM}
           tone="neutral"
         />
       </div>
@@ -290,9 +296,9 @@ function ChallengePanel({ challenge, signature, keyInfo }) {
       <div className="kv-stack">
         <KeyValue label="Nonce" value={compact(challenge?.nonce, 16)} mono />
         <KeyValue label="Nonce ID" value={compact(challenge?.nonce_id, 10)} mono />
-        <KeyValue label="Key slot" value={challenge?.key_index ?? 'Not assigned'} />
-        <KeyValue label="Remaining slots" value={challenge?.signature_slots_remaining ?? 'Unknown'} />
-        <KeyValue label="Private key slots" value={keyInfo?.slots ?? 'Not loaded'} />
+        <KeyValue label="Key slot" value={challenge?.key_index ?? 'Stateless'} />
+        <KeyValue label="Remaining slots" value={formatSlots(challenge?.signature_slots_remaining)} />
+        <KeyValue label="Private key slots" value={keyInfo ? formatSlots(keyInfo.slots) : 'Not loaded'} />
         <KeyValue label="Signature" value={compact(signature, 14)} mono />
       </div>
     </section>
@@ -302,8 +308,6 @@ function ChallengePanel({ challenge, signature, keyInfo }) {
 function RegisterView({
   username,
   setUsername,
-  slotCount,
-  setSlotCount,
   generated,
   generating,
   registering,
@@ -324,19 +328,16 @@ function RegisterView({
           onChange={setUsername}
           placeholder="alice_research"
         />
-        <label className="field">
-          <span>One-time signature slots</span>
-          <input
-            type="number"
-            min="1"
-            max="64"
-            value={slotCount}
-            onChange={(event) => setSlotCount(event.target.value)}
-          />
-        </label>
+        <div className="crypto-choice">
+          <Fingerprint size={18} />
+          <div>
+            <span>Default signature scheme</span>
+            <strong>ML-DSA-65</strong>
+          </div>
+        </div>
         <div className="button-row">
           <Button icon={KeyRound} variant="secondary" loading={generating} onClick={onGenerate}>
-            Generate keys
+            Generate ML-DSA keys
           </Button>
           <Button icon={UserPlus} loading={registering} disabled={!generated?.publicKey} onClick={onRegister}>
             Register public key
@@ -358,7 +359,7 @@ function RegisterView({
           <TextArea label="Public key JSON" value={generated?.publicKey || ''} readOnly placeholder="Generated public key" rows={8} />
           <div className="summary-row">
             <span>{publicSummary?.algorithm || 'No key'}</span>
-            <span>{publicSummary?.slots ?? 0} slots</span>
+            <span>{formatSlots(publicSummary?.slots)}</span>
             <span>{publicSummary?.chars ?? 0} chars</span>
           </div>
         </div>
@@ -381,7 +382,7 @@ function RegisterView({
           <TextArea label="Private key JSON" value={generated?.privateKey || ''} readOnly placeholder="Generated private key" rows={8} />
           <div className="summary-row">
             <span>{privateSummary?.algorithm || 'No key'}</span>
-            <span>{privateSummary?.slots ?? 0} slots</span>
+            <span>{formatSlots(privateSummary?.slots)}</span>
             <span>{privateSummary?.chars ?? 0} chars</span>
           </div>
         </div>
@@ -444,7 +445,7 @@ function LoginView({
         </div>
         <div className="kv-stack">
           <KeyValue label="Algorithm" value={privateKeyInfo?.algorithm || 'Not loaded'} />
-          <KeyValue label="Slots" value={privateKeyInfo?.slots ?? 'Not loaded'} />
+          <KeyValue label="Slots" value={privateKeyInfo ? formatSlots(privateKeyInfo.slots) : 'Not loaded'} />
           <KeyValue label="Private bytes" value={privateKeyInfo?.bytes ?? 'Not loaded'} />
           <KeyValue label="Storage" value="Browser memory only" />
         </div>
@@ -469,7 +470,7 @@ function DashboardView({ session, userInfo, onVerify, onUserInfo, onLogout, veri
           <KeyValue label="Token" value={session?.token ? 'Active and hidden' : 'None'} />
           <KeyValue label="Expires" value={formatDate(session?.expiresAt)} />
           <KeyValue label="Algorithm" value={session?.algorithm || 'Unknown'} />
-          <KeyValue label="Slots remaining" value={session?.slotsRemaining || 'Unknown'} />
+          <KeyValue label="Slots remaining" value={formatSlots(session?.slotsRemaining)} />
         </div>
         <div className="button-row">
           <Button icon={RefreshCw} variant="secondary" loading={verifying} onClick={onVerify}>
@@ -500,7 +501,7 @@ function DashboardView({ session, userInfo, onVerify, onUserInfo, onLogout, veri
 
 function FlowPanel({ session, challenge, signature }) {
   const steps = [
-    { label: 'Key bundle generated', active: true },
+    { label: 'PQC keypair generated', active: true },
     { label: 'Public key registered', active: Boolean(localStorage.getItem('registeredUsername')) },
     { label: 'Nonce issued', active: Boolean(challenge?.nonce) },
     { label: 'Signature produced', active: Boolean(signature) },
@@ -538,7 +539,6 @@ export function App() {
   const [userInfo, setUserInfo] = useState(null);
 
   const [regUsername, setRegUsername] = useState(localStorage.getItem('registeredUsername') || '');
-  const [slotCount, setSlotCount] = useState('16');
   const [generated, setGenerated] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -675,19 +675,13 @@ export function App() {
   const showError = (message) => setStatus({ type: 'error', message });
 
   const handleGenerate = async () => {
-    const slots = Number(slotCount);
-    if (!Number.isInteger(slots) || slots < 1 || slots > 64) {
-      showError('Signature slots must be between 1 and 64.');
-      return;
-    }
-
     setGenerating(true);
     try {
-      const keys = await QuantumCrypto.generateKeyPair(slots);
+      const keys = await QuantumCrypto.generateKeyPair();
       setGenerated(keys);
       setSignature('');
       setChallenge(null);
-      showSuccess(`Generated ${keys.algorithm} bundle with ${keys.signatureSlots} one-time slots.`);
+      showSuccess(`Generated standardized ${keys.algorithm} keypair.`);
     } catch (error) {
       showError(error.message);
     } finally {
@@ -747,7 +741,7 @@ export function App() {
       setChallenge(nonceData);
 
       const keyIndex = nonceData.key_index ?? 0;
-      if (keyIndex >= keyInfo.slots) {
+      if (keyInfo.slots !== null && keyIndex >= keyInfo.slots) {
         throw new Error('Private key does not contain the requested one-time signature slot.');
       }
 
@@ -885,8 +879,6 @@ export function App() {
             <RegisterView
               username={regUsername}
               setUsername={setRegUsername}
-              slotCount={slotCount}
-              setSlotCount={setSlotCount}
               generated={generated}
               generating={generating}
               registering={registering}

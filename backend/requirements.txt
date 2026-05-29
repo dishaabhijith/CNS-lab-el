@@ -7,8 +7,13 @@ SQLAlchemy==2.0.49
 python-dotenv==1.0.0
 cryptography==41.0.7
 
-# Optional: Post-Quantum Cryptography Libraries
-# Install ONE of the following for real post-quantum signatures:
+# Post-Quantum Cryptography Libraries
+
+# Default production-grade demo backend:
+# Provides ML-DSA-65 and SPHINCS+-SHA2-256f verification.
+pqcrypto==0.4.0
+
+# Optional alternatives:
 
 # Option 1: Open Quantum Safe (Recommended) - Provides ML-DSA, ML-KEM, SLH-DSA
 # Supports NIST-standardized post-quantum algorithms
@@ -22,15 +27,18 @@ cryptography==41.0.7
 
 # Option 3: XMSS - eXtendable Merkle Signature Scheme
 # Hash-based with smaller signatures than SPHINCS+
-# Installation: pip install xmss-py
+# No maintained pip package was available for this Python 3.14/Windows setup
+# during project hardening. Keep this as an extension point unless using a
+# known-good XMSS package or a pinned older Python/runtime.
+# Historical installation note: pip install xmss-py
 # xmss-py>=1.1.0
 
-# If no post-quantum library is installed, the browser flow uses
-# WOTS-SHA256 hash-based signatures for demonstration purposes.
+# If pqcrypto is unavailable on a platform, the legacy WOTS-SHA256 fallback
+# remains available for local classroom demonstrations.
 
 # Installation instructions:
 # 1. Create virtual environment: python -m venv venv
 # 2. Activate: venv\Scripts\activate (Windows) or source venv/bin/activate (Unix)
-# 3. Install core: pip install -r requirements.txt
-# 4. Install post-quantum (optional): pip install liboqs-python
+# 3. Install core + ML-DSA: pip install -r requirements.txt
+# 4. Install optional alternatives only when needed.
 

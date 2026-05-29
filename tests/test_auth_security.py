@@ -64,6 +64,13 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertEqual(replay.status_code, 401)
         self.assertEqual(replay.get_json()['error'], 'Invalid or expired nonce')
 
+    def test_default_signature_algorithm_is_ml_dsa(self):
+        public_key, private_key = QuantumSafeSignature.generate_keypair()
+
+        self.assertEqual(QuantumSafeSignature.get_public_key_algorithm(public_key), 'ML-DSA-65')
+        self.assertEqual(QuantumSafeSignature.get_private_key_algorithm(private_key), 'ML-DSA-65')
+        self.assertIsNone(QuantumSafeSignature.get_public_key_capacity(public_key))
+
     def test_bad_signature_consumes_nonce(self):
         _, private_key = self.register_user()
         nonce_data = self.request_nonce()

@@ -287,7 +287,7 @@ def require_session(f):
 def algorithms():
     """Report available signature algorithms and runtime backend status."""
     return jsonify({
-        'default_algorithm': 'WOTS-SHA256',
+        'default_algorithm': QuantumSafeSignature.SIGNATURE_ALGORITHM,
         'best_installed_backend': QuantumSafeSignature.get_backend(),
         'nonce_expires_in_seconds': int(current_app.config['NONCE_EXPIRY'].total_seconds()),
         'supported_algorithms': QuantumSafeSignature.get_supported_algorithms()

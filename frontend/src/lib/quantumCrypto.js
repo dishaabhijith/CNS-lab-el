@@ -1,8 +1,12 @@
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
+
 export class QuantumCrypto {
+  static ML_DSA_ALGORITHM = 'ML-DSA-65';
   static WOTS_ALGORITHM = 'WOTS-SHA256';
   static WOTS_PUBLIC_TYPE = 'PQC-AUTH-PUBLIC';
   static WOTS_PRIVATE_TYPE = 'PQC-AUTH-PRIVATE';
   static WOTS_SIGNATURE_TYPE = 'PQC-AUTH-SIGNATURE';
+  static DEFAULT_ALGORITHM = this.ML_DSA_ALGORITHM;
   static WOTS_W = 16;
   static WOTS_CHAIN_STEPS = 15;
   static WOTS_SECRET_SIZE = 32;
@@ -11,7 +15,38 @@ export class QuantumCrypto {
   static WOTS_LEN = 67;
   static DEFAULT_SIGNATURE_SLOTS = 16;
 
-  static async generateKeyPair(slotCount = this.DEFAULT_SIGNATURE_SLOTS) {
+  static async generateKeyPair(slotCount = this.DEFAULT_SIGNATURE_SLOTS, algorithm = this.DEFAULT_ALGORITHM) {
+    if (algorithm === this.ML_DSA_ALGORITHM) {
+      return this.generateMlDsaKeyPair();
+    }
+    return this.generateWotsKeyPair(slotCount);
+  }
+
+  static generateMlDsaKeyPair() {
+    const keyPair = ml_dsa65.keygen();
+    const publicKey = JSON.stringify({
+      type: this.WOTS_PUBLIC_TYPE,
+      algorithm: this.ML_DSA_ALGORITHM,
+      key: this._bytesToBase64Url(keyPair.publicKey)
+    });
+
+    const privateKey = JSON.stringify({
+      type: this.WOTS_PRIVATE_TYPE,
+      algorithm: this.ML_DSA_ALGORITHM,
+      key: this._bytesToBase64Url(keyPair.secretKey)
+    });
+
+    return {
+      publicKey,
+      privateKey,
+      algorithm: this.ML_DSA_ALGORITHM,
+      signatureSlots: null,
+      publicKeyBytes: keyPair.publicKey.length,
+      privateKeyBytes: keyPair.secretKey.length
+    };
+  }
+
+  static async generateWotsKeyPair(slotCount = this.DEFAULT_SIGNATURE_SLOTS) {
     if (!Number.isInteger(slotCount) || slotCount <= 0) {
       throw new Error('Signature slot count must be a positive integer');
     }
@@ -54,6 +89,16 @@ export class QuantumCrypto {
   static async signMessage(message, privateKey, keyIndex = 0) {
     const parsedKey = this._parsePrivateKey(privateKey);
 
+    if (parsedKey.algorithm === this.ML_DSA_ALGORITHM) {
+      const encoded = new TextEncoder().encode(message);
+      const signature = ml_dsa65.sign(encoded, parsedKey.keyMaterial);
+      return JSON.stringify({
+        type: this.WOTS_SIGNATURE_TYPE,
+        algorithm: this.ML_DSA_ALGORITHM,
+        signature: this._bytesToBase64Url(signature)
+      });
+    }
+
     if (keyIndex < 0 || keyIndex >= parsedKey.slots) {
       throw new Error('This private key does not contain the requested signature slot');
     }
@@ -82,7 +127,7 @@ export class QuantumCrypto {
       type: 'PQC-AUTH-KEYPAIR',
       publicKey,
       privateKey,
-      algorithm: this.WOTS_ALGORITHM,
+      algorithm: this.getPrivateKeyInfo(privateKey).algorithm,
       generatedAt: new Date().toISOString()
     };
   }
@@ -91,19 +136,19 @@ export class QuantumCrypto {
     const data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
 
     if (data.type === 'PQC-AUTH-KEYPAIR') {
-      this._parsePrivateKey(data.privateKey);
+      const info = this._parsePrivateKey(data.privateKey);
       return {
         publicKey: data.publicKey,
         privateKey: data.privateKey,
-        algorithm: data.algorithm || this.WOTS_ALGORITHM
+        algorithm: data.algorithm || info.algorithm
       };
     }
 
     if (data.type === this.WOTS_PRIVATE_TYPE) {
-      this._parsePrivateKey(JSON.stringify(data));
+      const info = this._parsePrivateKey(JSON.stringify(data));
       return {
         privateKey: JSON.stringify(data),
-        algorithm: this.WOTS_ALGORITHM
+        algorithm: info.algorithm
       };
     }
 
@@ -121,9 +166,26 @@ export class QuantumCrypto {
 
   static getPublicKeyInfo(publicKey) {
     const payload = typeof publicKey === 'string' ? JSON.parse(publicKey) : publicKey;
-    if (payload.type !== this.WOTS_PUBLIC_TYPE || payload.algorithm !== this.WOTS_ALGORITHM) {
+    if (payload.type !== this.WOTS_PUBLIC_TYPE) {
       throw new Error('Unsupported public key algorithm');
     }
+
+    if (payload.algorithm === this.ML_DSA_ALGORITHM) {
+      const keyMaterial = this._base64UrlToBytes(payload.key);
+      if (keyMaterial.length !== ml_dsa65.lengths.publicKey) {
+        throw new Error('ML-DSA public key length does not match metadata');
+      }
+      return {
+        algorithm: payload.algorithm,
+        slots: null,
+        bytes: keyMaterial.length
+      };
+    }
+
+    if (payload.algorithm !== this.WOTS_ALGORITHM) {
+      throw new Error('Unsupported public key algorithm');
+    }
+
     const slots = Number(payload.slots);
     if (!Number.isInteger(slots) || slots <= 0) {
       throw new Error('Invalid public key slot count');
@@ -142,7 +204,7 @@ export class QuantumCrypto {
     return {
       type: payload.type,
       algorithm: payload.algorithm,
-      slots: payload.slots,
+      slots: payload.slots ?? null,
       chars: JSON.stringify(payload).length
     };
   }
@@ -155,7 +217,23 @@ export class QuantumCrypto {
       throw new Error('Private key must be a valid JSON key bundle');
     }
 
-    if (payload.type !== this.WOTS_PRIVATE_TYPE || payload.algorithm !== this.WOTS_ALGORITHM) {
+    if (payload.type !== this.WOTS_PRIVATE_TYPE) {
+      throw new Error('Unsupported private key algorithm');
+    }
+
+    if (payload.algorithm === this.ML_DSA_ALGORITHM) {
+      const keyMaterial = this._base64UrlToBytes(payload.key);
+      if (keyMaterial.length !== ml_dsa65.lengths.secretKey) {
+        throw new Error('ML-DSA private key length does not match metadata');
+      }
+      return {
+        algorithm: payload.algorithm,
+        slots: null,
+        keyMaterial
+      };
+    }
+
+    if (payload.algorithm !== this.WOTS_ALGORITHM) {
       throw new Error('Unsupported private key algorithm');
     }
 

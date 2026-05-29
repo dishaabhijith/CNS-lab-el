@@ -88,6 +88,7 @@
   - Flask, Flask-CORS
   - SQLAlchemy
   - cryptography
+  - pqcrypto for default ML-DSA-65 verification
   - python-dotenv
 
 ## 🎨 Frontend Files
@@ -104,50 +105,13 @@
   - API activity stream
 
 - **`frontend/src/lib/quantumCrypto.js`**
-  - Browser WOTS-SHA256 key generation
-  - One-time signature generation
+  - Browser ML-DSA-65 key generation using `@noble/post-quantum`
+  - Legacy WOTS-SHA256 fallback support
   - Key import/export and metadata helpers
 
 - **`frontend/src/styles.css`**
   - Responsive console UI
   - Form, key, telemetry, and dashboard surfaces
-
-### Legacy HTML
-- **`frontend/index.html`** (180 lines)
-  - Single-page application
-  - Registration form with key generation
-  - Login form with private key input
-  - Dashboard (post-authentication)
-  - Status message containers
-
-### JavaScript
-- **`frontend/js/crypto.js`** (180 lines)
-  - QuantumCrypto class
-  - generateKeyPair() - XMSS keypair generation
-  - signMessage() - Sign data with private key
-  - verifySignature() - Verify signatures
-  - generateNonce() - Create random nonces
-  - Key import/export functions
-  - Browser Web Crypto API integration
-
-- **`frontend/js/auth.js`** (400 lines)
-  - AuthManager class
-  - handleGenerateKeys() - UI key generation
-  - handleRegister() - Registration flow
-  - handleLogin() - Complete login flow
-  - Session management
-  - UI state management
-  - Event listeners and form handling
-
-### CSS
-- **`frontend/css/style.css`** (350 lines)
-  - Modern gradient design
-  - Responsive layout
-  - Form styling
-  - Button styles
-  - Dashboard layout
-  - Status/error message styling
-  - Mobile optimization
 
 ## 🛠️ Configuration Files
 

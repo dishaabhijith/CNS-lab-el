@@ -4,12 +4,12 @@ A modern authentication system using **post-quantum cryptography** instead of tr
 
 ## 🔐 Key Features
 
-- ✅ **Post-Quantum Security**: Uses hash-based signatures (SPHINCS+, XMSS, ML-DSA) - resistant to quantum computer attacks
+- ✅ **Post-Quantum Security**: Defaults to ML-DSA-65, a NIST-standardized post-quantum signature
 - ✅ **No Passwords**: Authentication via digital signatures instead of passwords
 - ✅ **Replay Attack Prevention**: Nonce-based challenge-response mechanism (one-time use)
 - ✅ **Public Key Storage**: Server stores only public keys, never private keys
 - ✅ **Session Management**: Secure token-based sessions with expiration
-- ✅ **Multiple Crypto Backends**: Auto-detects liboqs, SPHINCS+, XMSS, with a browser-ready WOTS-SHA256 fallback
+- ✅ **Multiple Crypto Backends**: Uses `pqcrypto` ML-DSA-65 by default and reports optional liboqs, SPHINCS+, and XMSS support
 - ✅ **Rate Limiting**: Protection against brute-force attacks
 - ✅ **Educational**: Easy to understand implementation suitable for student projects
 
@@ -29,7 +29,9 @@ Login:
 
 ## 🔐 Post-Quantum Cryptography
 
-This system uses **post-quantum resistant digital signatures** instead of passwords or traditional cryptography:
+This system uses **post-quantum resistant digital signatures** instead of passwords or traditional cryptography.
+
+**Current default:** new browser registrations use **ML-DSA-65**, a NIST FIPS 204 post-quantum digital signature. The backend verifies ML-DSA-65 with `pqcrypto`. The older WOTS-SHA256 implementation is kept only as a legacy/demo fallback for older keys.
 
 ### Why Post-Quantum?
 - **Threat**: Quantum computers (RSA/ECDSA can be broken by quantum computers using Shor's algorithm)
@@ -38,6 +40,9 @@ This system uses **post-quantum resistant digital signatures** instead of passwo
 - **Protection**: This system is quantum-safe now and for the future
 
 ### Supported Algorithms
+
+New registrations default to ML-DSA-65. WOTS-SHA256 is retained only for legacy/demo compatibility.
+
 | Algorithm | Library | Key Type | Status |
 |-----------|---------|----------|--------|
 | SPHINCS+ | sphincsplus | Hash-based | ✅ Recommended |
@@ -45,14 +50,14 @@ This system uses **post-quantum resistant digital signatures** instead of passwo
 | ML-DSA | liboqs | Lattice-based | ✅ NIST Standard |
 | WOTS-SHA256 | native Web Crypto/Python | Hash-based demo | ✅ Browser-ready |
 
-### Install Real Post-Quantum (Optional)
+### Post-Quantum Dependencies
 ```bash
-# Auto-detects available libraries in this order:
-pip install liboqs-python      # NIST-standardized
-pip install sphincsplus         # Hash-based
-pip install xmss-py             # Memory-efficient
+# Backend ML-DSA-65 support is included in backend/requirements.txt via pqcrypto.
+pip install -r backend/requirements.txt
 
-# System reports installed PQC libraries and uses WOTS-SHA256 in the browser UI
+# Frontend ML-DSA-65 support is included in frontend/package.json via @noble/post-quantum.
+cd frontend
+npm install
 ```
 
 **For detailed cryptography explanation, see [POST_QUANTUM_GUIDE.md](POST_QUANTUM_GUIDE.md)**
@@ -92,7 +97,7 @@ quantum-auth-system/
 - Python 3.8+
 - pip (Python package manager)
 - A modern web browser (Chrome, Firefox, Safari, Edge)
-- Node.js (optional, for serving frontend locally)
+- Node.js 20+ (for the Vite frontend)
 
 ### 1. Backend Setup
 
@@ -138,7 +143,7 @@ Visit: `http://127.0.0.1:5173`
 ### Registration
 
 1. **Generate Keys**: Click "Generate keys"
-   - Creates a WOTS-SHA256 hash-based key bundle locally in your browser
+   - Creates an ML-DSA-65 post-quantum keypair locally in your browser
    - Public key: Sent to server (stored in database)
    - Private key: Keep safe! (never sent to server)
 
@@ -173,19 +178,19 @@ Click "Logout" to end the session and return to login screen.
 
 ### Why Post-Quantum?
 
-Traditional encryption (RSA, ECDSA) could be broken by quantum computers using Shor's algorithm. XMSS is based on hash functions and is believed to be quantum-resistant.
+Traditional RSA and ECDSA public-key systems could be broken by sufficiently large quantum computers using Shor's algorithm. This project now defaults to ML-DSA-65, a NIST-standardized post-quantum digital signature scheme.
 
-### Key Generation (XMSS)
+### Key Generation (ML-DSA-65)
 
-1. Generate random private key (256 bits)
-2. Derive public key by hashing the private key
-3. In production XMSS: build a Merkle tree with multiple hash layers
+1. Browser generates an ML-DSA-65 public/private keypair.
+2. Public key is sent to the backend.
+3. Private key remains with the user and is never sent to the server.
 
 ### Signature Process
 
 1. Client receives nonce from server
 2. Create message: `username + nonce`
-3. Sign message with a one-time WOTS-SHA256 private-key slot
+3. Sign message with the ML-DSA-65 private key
 4. Send signature to server
 
 ### Verification Process

@@ -54,7 +54,7 @@ The new frontend is a security console with these sections:
 Used to:
 
 - Enter username.
-- Generate a WOTS-SHA256 key bundle.
+- Generate an ML-DSA-65 post-quantum keypair.
 - View public key JSON.
 - View private key JSON.
 - Download or copy the private key.
@@ -96,9 +96,9 @@ Example:
 
 ```text
 Backend: Online
-Backend PQC: WOTS-SHA256
+Backend PQC: ML-DSA-65
 Nonce TTL: 5m
-Browser Default: WOTS-SHA256
+Browser Default: ML-DSA-65
 ```
 
 #### Nonce and Signature Panel
@@ -235,6 +235,7 @@ They verify:
 - Oversized public keys are rejected.
 - Session token is hashed at rest.
 - Security headers are present.
+- Default signature algorithm is ML-DSA-65.
 
 Run tests:
 
@@ -246,7 +247,7 @@ cd D:\CNS-lab-el
 Expected result:
 
 ```text
-Ran 6 tests
+Ran 7 tests
 OK
 ```
 
@@ -256,21 +257,21 @@ Do not say this is a real quantum computer attack demo.
 
 Say this:
 
-> This project demonstrates a quantum-resistant authentication design by avoiding RSA/ECC and passwords during login. Authentication is done using hash-based digital signatures and fresh nonces.
+> This project demonstrates a quantum-resistant authentication design by avoiding RSA/ECC and passwords during login. Authentication is done using ML-DSA-65 post-quantum digital signatures and fresh nonces.
 
 Important points:
 
 - Shor’s algorithm threatens RSA and elliptic-curve cryptography.
 - This login flow does not use RSA or ECDSA.
-- The browser demo uses WOTS-SHA256, a hash-based one-time signature approach.
-- Hash-based signatures are a post-quantum family because their security is based on hash functions.
+- The browser uses ML-DSA-65 from `@noble/post-quantum`.
+- The backend verifies ML-DSA-65 signatures with `pqcrypto`.
 - The server stores only public verification material.
 - A fresh nonce is required for every login.
 - Captured login traffic cannot be replayed.
 
 Honest limitation:
 
-> This is a research prototype. For production, the demo WOTS bundle should be replaced with a standardized and reviewed PQC implementation such as ML-DSA or SLH-DSA/SPHINCS+.
+> This is still a research prototype, but the default signature path is now standardized ML-DSA-65. Production use would still require formal cryptographic review, key lifecycle design, and deployment hardening.
 
 ## How To Show It Is More Than Normal Login
 
@@ -356,13 +357,13 @@ Presentation line:
 Show:
 
 ```text
-Backend PQC: WOTS-SHA256
-Browser Default: WOTS-SHA256
+Backend PQC: ML-DSA-65
+Browser Default: ML-DSA-65
 ```
 
 Presentation line:
 
-> The current browser implementation uses WOTS-SHA256, a hash-based signature demo. The architecture also exposes optional backend support for ML-DSA, SPHINCS+, and XMSS when those libraries are installed.
+> The current browser implementation uses ML-DSA-65, a NIST-standardized post-quantum signature. The backend also reports SPHINCS+-SHA2-256f through `pqcrypto`. The architecture keeps WOTS-SHA256 only as a legacy fallback and leaves XMSS as an extension point because no usable Python 3.14 package was available in this setup.
 
 ## Recommended Presentation Flow
 
@@ -381,7 +382,7 @@ Presentation line:
 
 Use this in your viva/demo:
 
-> This is not a normal password login. It is a passwordless challenge-response authentication system. During registration, the browser creates a hash-based WOTS-SHA256 key bundle. The backend stores only the public key. During login, the backend sends a fresh nonce, and the browser signs `username + nonce` with the private key. The backend verifies the signature using the public key and then marks the nonce as used. This removes password storage, avoids RSA/ECC-based login primitives that are vulnerable to quantum attacks, and prevents replay attacks using single-use nonces.
+> This is not a normal password login. It is a passwordless challenge-response authentication system. During registration, the browser creates an ML-DSA-65 post-quantum keypair. The backend stores only the public key. During login, the backend sends a fresh nonce, and the browser signs `username + nonce` with the private key. The backend verifies the signature using the public key and then marks the nonce as used. This removes password storage, avoids RSA/ECC-based login primitives that are vulnerable to quantum attacks, and prevents replay attacks using single-use nonces.
 
 ## Remaining Limitations
 
@@ -389,7 +390,7 @@ This project is still a prototype.
 
 Remaining production work:
 
-- Replace demo WOTS-SHA256 bundle with standardized PQC libraries.
+- Keep the ML-DSA-65 implementation under review and document the key-envelope format.
 - Add account recovery and key rotation.
 - Use PostgreSQL/MySQL with migrations.
 - Add deployment monitoring and CI.

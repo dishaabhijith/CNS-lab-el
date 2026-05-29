@@ -14,6 +14,7 @@ This project is still best treated as a research and teaching prototype, but it 
 - Session tokens are HMAC-hashed before database storage.
 - Frontend session tokens are stored in `sessionStorage`, migrated out of legacy `localStorage`, and hidden from the dashboard.
 - Private-key JSON is validated in the browser before requesting a nonce, avoiding accidental one-time slot consumption for obviously bad keys.
+- Browser registration now defaults to ML-DSA-65 via `@noble/post-quantum`, and the backend verifies ML-DSA-65 plus SPHINCS+-SHA2-256f via `pqcrypto`.
 - Optional session binding to IP and user-agent is available with `BIND_SESSION_TO_IP` and `BIND_SESSION_TO_USER_AGENT`.
 - A focused `unittest` suite covers replay rejection, bad signature nonce consumption, generic challenge failures, hashed session storage, oversized input rejection, and security headers.
 
@@ -36,7 +37,7 @@ Use a production WSGI server such as Waitress or Gunicorn behind HTTPS. If the a
 
 ## Still Required Before Real-World Use
 
-- Replace the browser WOTS-SHA256 demo bundle with a standardized, reviewed post-quantum signature implementation and stable key format.
+- Keep the ML-DSA-65 dependency and key-envelope format under cryptographic review before any real production deployment.
 - Use PostgreSQL/MySQL with migrations instead of SQLite and `db.create_all()`.
 - Add key rotation, account recovery, device enrollment, device revocation, and account lock/recovery workflows.
 - Decide whether bearer tokens are acceptable for your deployment or move to Secure, HttpOnly, SameSite cookies with CSRF protection.

@@ -314,6 +314,35 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
 }
 
+.crypto-choice {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #b8cafe;
+  border-radius: 8px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  margin-bottom: 14px;
+}
+
+.crypto-choice span,
+.crypto-choice strong {
+  display: block;
+}
+
+.crypto-choice span {
+  font-size: 12px;
+  font-weight: 800;
+  color: #315aa7;
+}
+
+.crypto-choice strong {
+  color: var(--ink);
+}
+
 .button-row {
   gap: 10px;
   flex-wrap: wrap;
